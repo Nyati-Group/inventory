@@ -1,0 +1,1010 @@
+// NYATI Procurement & Inventory Automation — data model (MongoDB)
+// Money: Float in INR, always rounded to 2 decimals in code. Dates stored in UTC.
+// Connection: MONGODB_URI + MONGODB_DB in .env (composed into DATABASE_URL by src/lib/mongo-url.ts).
+// MongoDB must run as a replica set (Atlas does) — Prisma uses transactions.
+//
+// Note: optional fields are never @unique here — MongoDB unique indexes treat multiple nulls as duplicates.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  ADMIN
+  PROCUREMENT_MANAGER
+  APPROVER
+  SITE_ENGINEER
+}
+
+enum ProjectStatus {
+  PLANNING
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+}
+
+enum VendorStatus {
+  ACTIVE
+  ON_HOLD
+  BLACKLISTED
+}
+
+enum StockMoveType {
+  IN
+  OUT
+  ADJUST
+}
+
+enum MaterialRequestStatus {
+  OPEN
+  RFQ_CREATED
+  CLOSED
+  CANCELLED
+}
+
+enum RFQStatus {
+  DRAFT
+  SENT
+  PARTIALLY_RESPONDED
+  CLOSED
+  AWAITING_APPROVAL
+  APPROVED
+  ORDERED
+  CANCELLED
+}
+
+enum RFQVendorStatus {
+  QUEUED
+  SENT
+  OPENED
+  RESPONDED
+  DECLINED
+  NO_RESPONSE
+  FAILED
+}
+
+enum TemplateKind {
+  BUILTIN
+  DOCX
+}
+
+enum SubmissionMethod {
+  TEXT
+  PDF
+  DOCX
+  IMAGE
+  XLSX
+}
+
+enum ParseStatus {
+  PENDING
+  PARSED
+  NEEDS_REVIEW
+  CONFIRMED
+  FAILED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RE_RFQ
+  CANCELLED
+}
+
+enum POStatus {
+  DRAFT
+  APPROVED
+  SENT
+  ACCEPTED
+  CHANGE_REQUESTED
+  PARTIALLY_DELIVERED
+  DELIVERED
+  CLOSED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  DISPATCHED
+  IN_TRANSIT
+  DELAYED
+  ARRIVED
+}
+
+enum ReturnStatus {
+  OPEN
+  REPLACED
+  CREDITED
+  CLOSED
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+  DEMO
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+// ───────────────────────────── Org & users ─────────────────────────────
+
+model Company {
+  id        String   @id @default(cuid()) @map("_id")
+  name      String
+  legalName String?
+  address   String?
+  gstin     String?
+  pan       String?
+  phone     String?
+  email     String?
+  currency  String   @default("INR")
+  timezone  String   @default("Asia/Kolkata")
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id            String    @id @default(cuid()) @map("_id")
+  name          String
+  email         String    @unique
+  passwordHash  String
+  role          Role
+  phone         String?
+  approvalLimit Float?
+  isActive      Boolean   @default(true)
+  lastProjectId String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  memberships      ProjectMember[]
+  approvalRules    ApprovalRule[]
+  notifications    Notification[]
+  approvalSteps    ApprovalStep[]
+  auditLogs        AuditLog[]
+  rfqsCreated      RFQ[]             @relation("RFQCreatedBy")
+  posCreated       PurchaseOrder[]   @relation("POCreatedBy")
+  grnsReceived     GRN[]
+  approvalRequests ApprovalRequest[] @relation("ApprovalRequestedBy")
+}
+
+// ───────────────────────────── Projects ─────────────────────────────
+
+model Project {
+  id                   String        @id @default(cuid()) @map("_id")
+  code                 String        @unique
+  name                 String
+  client               String?
+  status               ProjectStatus @default(ACTIVE)
+  startDate            DateTime?
+  endDate              DateTime?
+  budget               Float?
+  siteAddress          String
+  city                 String
+  state                String?
+  pincode              String?
+  lat                  Float?
+  lng                  Float?
+  siteContactName      String?
+  siteContactPhone     String?
+  receivingHours       String?
+  unloadingConstraints String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  deletedAt            DateTime?
+
+  members          ProjectMember[]
+  settings         ProjectSettings?
+  approvalRules    ApprovalRule[]
+  stocks           MaterialProjectStock[]
+  ledger           StockLedger[]
+  vendors          ProjectVendor[]
+  rfqs             RFQ[]
+  purchaseOrders   PurchaseOrder[]
+  grns             GRN[]
+  ratings          VendorRating[]
+  rateHistory      RateHistory[]
+  materialRequests MaterialRequest[]
+  marketSnapshots  MarketRateSnapshot[]
+  approvalRequests ApprovalRequest[]
+  notifications    Notification[]
+}
+
+model ProjectMember {
+  id        String  @id @default(cuid()) @map("_id")
+  projectId String
+  userId    String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+model ProjectSettings {
+  id                       String  @id @default(cuid()) @map("_id")
+  projectId                String  @unique
+  project                  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  weightPrice              Int     @default(40)
+  weightDelivery           Int     @default(20)
+  weightProximity          Int     @default(10)
+  weightRating             Int     @default(20)
+  weightCommercial         Int     @default(10)
+  maxDelayDays             Int     @default(7)
+  defaultDeadlineHours     Int     @default(48)
+  reminderHoursBefore      Int[]   @default([24, 3])
+  financeApprovalThreshold Float   @default(500000)
+  notifyNotSelected        Boolean @default(true)
+}
+
+/// Approval chain: approvals at amount >= minAmount require this approver at this level.
+model ApprovalRule {
+  id        String  @id @default(cuid()) @map("_id")
+  projectId String
+  userId    String
+  level     Int
+  label     String
+  minAmount Float   @default(0)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, level])
+}
+
+// ───────────────────────────── Materials & stock ─────────────────────────────
+
+model MaterialCategory {
+  id        String           @id @default(cuid()) @map("_id")
+  name      String           @unique
+  materials Material[]
+  vendors   VendorCategory[]
+}
+
+model Material {
+  id         String           @id @default(cuid()) @map("_id")
+  code       String           @unique
+  name       String
+  categoryId String
+  category   MaterialCategory @relation(fields: [categoryId], references: [id])
+  unit       String
+  spec       String?
+  hsnCode    String?
+  gstPercent Float            @default(18)
+  createdAt  DateTime         @default(now())
+  deletedAt  DateTime?
+
+  stocks           MaterialProjectStock[]
+  ledger           StockLedger[]
+  vendorMaterials  VendorMaterial[]
+  rfqItems         RFQItem[]
+  poItems          POItem[]
+  grnItems         GRNItem[]
+  rateHistory      RateHistory[]
+  marketSnapshots  MarketRateSnapshot[]
+  materialRequests MaterialRequest[]
+  returnRequests   ReturnRequest[]
+
+  @@index([categoryId])
+}
+
+model MaterialProjectStock {
+  id           String    @id @default(cuid()) @map("_id")
+  projectId    String
+  materialId   String
+  currentQty   Float     @default(0)
+  reorderLevel Float     @default(0)
+  lastRate     Float?
+  lastRateAt   DateTime?
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  material     Material  @relation(fields: [materialId], references: [id])
+
+  @@unique([projectId, materialId])
+}
+
+model StockLedger {
+  id           String        @id @default(cuid()) @map("_id")
+  projectId    String
+  materialId   String
+  type         StockMoveType
+  qty          Float
+  balanceAfter Float
+  refType      String?
+  refId        String?
+  note         String?
+  createdById  String?
+  createdAt    DateTime      @default(now())
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  material     Material      @relation(fields: [materialId], references: [id])
+
+  @@index([projectId, materialId, createdAt])
+}
+
+/// Every purchase rate we paid (seeded history + PO creation). Drives rate graphs.
+model RateHistory {
+  id         String   @id @default(cuid()) @map("_id")
+  projectId  String
+  materialId String
+  vendorId   String
+  poId       String?
+  poNumber   String?
+  qty        Float
+  rate       Float
+  date       DateTime
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  material   Material @relation(fields: [materialId], references: [id])
+  vendor     Vendor   @relation(fields: [vendorId], references: [id])
+
+  @@index([materialId, date])
+  @@index([projectId, materialId, date])
+}
+
+model MaterialRequest {
+  id         String                @id @default(cuid()) @map("_id")
+  projectId  String
+  materialId String
+  qty        Float
+  status     MaterialRequestStatus @default(OPEN)
+  source     String                @default("MANUAL") // MANUAL | AUTO
+  note       String?
+  raisedById String?
+  rfqId      String?
+  createdAt  DateTime              @default(now())
+  project    Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  material   Material              @relation(fields: [materialId], references: [id])
+
+  @@index([projectId, status])
+}
+
+// ───────────────────────────── Vendors ─────────────────────────────
+
+model Vendor {
+  id                String       @id @default(cuid()) @map("_id")
+  name              String
+  contactPerson     String?
+  emails            String[]
+  phone             String?
+  whatsapp          String?
+  gstin             String?
+  pan               String?
+  address           String?
+  city              String
+  state             String?
+  pincode           String?
+  lat               Float?
+  lng               Float?
+  serviceRadiusKm   Int          @default(100)
+  leadTimeDays      Int          @default(3)
+  paymentTerms      String?
+  creditDays        Int          @default(0)
+  bankName          String?
+  bankAccountMasked String?
+  bankIfsc          String?
+  status            VendorStatus @default(ACTIVE)
+  isPreferred       Boolean      @default(false)
+  notes             String?
+  overallRating     Float?
+  completedOrders   Int          @default(0)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  deletedAt         DateTime?
+
+  materials      VendorMaterial[]
+  categories     VendorCategory[]
+  documents      VendorDocument[]
+  projects       ProjectVendor[]
+  rfqVendors     RFQVendor[]
+  quotations     Quotation[]
+  purchaseOrders PurchaseOrder[]
+  ratings        VendorRating[]
+  rateHistory    RateHistory[]
+  returnRequests ReturnRequest[]
+
+  @@index([gstin])
+  @@index([city])
+  @@index([status])
+}
+
+model VendorMaterial {
+  id         String   @id @default(cuid()) @map("_id")
+  vendorId   String
+  materialId String
+  lastRate   Float?
+  vendor     Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  material   Material @relation(fields: [materialId], references: [id])
+
+  @@unique([vendorId, materialId])
+}
+
+model VendorCategory {
+  id         String           @id @default(cuid()) @map("_id")
+  vendorId   String
+  categoryId String
+  vendor     Vendor           @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  category   MaterialCategory @relation(fields: [categoryId], references: [id])
+
+  @@unique([vendorId, categoryId])
+}
+
+model VendorDocument {
+  id         String   @id @default(cuid()) @map("_id")
+  vendorId   String
+  type       String
+  name       String
+  fileKey    String
+  uploadedAt DateTime @default(now())
+  vendor     Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+}
+
+/// Project vendor book: per-project distance, rating and notes.
+model ProjectVendor {
+  id             String   @id @default(cuid()) @map("_id")
+  projectId      String
+  vendorId       String
+  distanceKm     Float?
+  transitHours   Float?
+  distanceSource String? // GOOGLE | ORS | HAVERSINE
+  isPreferred    Boolean  @default(false)
+  isBlacklisted  Boolean  @default(false)
+  notes          String?
+  rating         Float?
+  ratedOrders    Int      @default(0)
+  createdAt      DateTime @default(now())
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  vendor         Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, vendorId])
+}
+
+// ───────────────────────────── RFQ ─────────────────────────────
+
+model RFQTemplate {
+  id          String       @id @default(cuid()) @map("_id")
+  version     Int          @unique
+  name        String
+  kind        TemplateKind
+  fileKey     String?
+  terms       String
+  isActive    Boolean      @default(false)
+  createdById String?
+  createdAt   DateTime     @default(now())
+  rfqs        RFQ[]
+}
+
+model RFQ {
+  id                   String       @id @default(cuid()) @map("_id")
+  number               String       @unique
+  projectId            String
+  status               RFQStatus    @default(DRAFT)
+  expectedDeliveryDate DateTime
+  deadline             DateTime
+  deliveryAddress      String
+  notes                String?
+  paymentTermsPref     String?
+  templateId           String?
+  pdfKey               String?
+  docxKey              String?
+  attachments          Json         @default("[]")
+  createdById          String?
+  createdAt            DateTime     @default(now())
+  closedAt             DateTime?
+  project              Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template             RFQTemplate? @relation(fields: [templateId], references: [id])
+  createdBy            User?        @relation("RFQCreatedBy", fields: [createdById], references: [id])
+
+  items            RFQItem[]
+  vendors          RFQVendor[]
+  quotations       Quotation[]
+  comparisonRuns   ComparisonRun[]
+  approvalRequests ApprovalRequest[]
+  purchaseOrders   PurchaseOrder[]
+
+  @@index([projectId, status])
+}
+
+model RFQItem {
+  id         String   @id @default(cuid()) @map("_id")
+  rfqId      String
+  materialId String
+  quantity   Float
+  unit       String
+  spec       String?
+  rfq        RFQ      @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  material   Material @relation(fields: [materialId], references: [id])
+}
+
+model RFQVendor {
+  id             String          @id @default(cuid()) @map("_id")
+  rfqId          String
+  vendorId       String
+  tokenHash      String          @unique
+  tokenCipher    String // AES-GCM encrypted token, needed to re-send links in reminders
+  tokenExpiresAt DateTime
+  status         RFQVendorStatus @default(QUEUED)
+  deadline       DateTime
+  sentAt         DateTime?
+  openedAt       DateTime?
+  respondedAt    DateTime?
+  declinedAt     DateTime?
+  declineReason  String?
+  remindersSent  Int             @default(0)
+  lastReminderAt DateTime?
+  openIp         String?
+  openUa         String?
+  distanceKm     Float?
+  rfq            RFQ             @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  vendor         Vendor          @relation(fields: [vendorId], references: [id])
+  quotation      Quotation?
+
+  @@unique([rfqId, vendorId])
+}
+
+// ───────────────────────────── Quotations ─────────────────────────────
+
+model Quotation {
+  id              String             @id @default(cuid()) @map("_id")
+  rfqVendorId     String             @unique
+  rfqId           String
+  vendorId        String
+  activeVersionId String?
+  referenceNo     String             @unique
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  rfqVendor       RFQVendor          @relation(fields: [rfqVendorId], references: [id], onDelete: Cascade)
+  rfq             RFQ                @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  vendor          Vendor             @relation(fields: [vendorId], references: [id])
+  activeVersion   QuotationVersion?  @relation("ActiveVersion", fields: [activeVersionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  versions        QuotationVersion[] @relation("Versions")
+
+  @@index([rfqId])
+  @@index([activeVersionId])
+}
+
+model QuotationVersion {
+  id             String              @id @default(cuid()) @map("_id")
+  quotationId    String
+  versionNo      Int
+  method         SubmissionMethod
+  rawText        String?
+  extracted      Json?
+  vendorFields   Json?
+  parseStatus    ParseStatus         @default(PENDING)
+  parseNotes     String?
+  confidence     Float?
+  // normalised values used by comparison (after review/corrections)
+  unitRate       Float?
+  quantity       Float?
+  unit           String?
+  gstPercent     Float?
+  freight        Float               @default(0)
+  loading        Float               @default(0)
+  otherCharges   Float               @default(0)
+  subtotal       Float?
+  gstTotal       Float?
+  statedTotal    Float?
+  landedCost     Float?
+  totalMismatch  Boolean             @default(false)
+  deliveryDays   Int?
+  deliveryDate   DateTime?
+  paymentTerms   String?
+  creditDays     Int?
+  validityDays   Int?
+  warranty       String?
+  deviations     String[]
+  remarks        String?
+  submittedAt    DateTime            @default(now())
+  ip             String?
+  userAgent      String?
+  source         String              @default("VENDOR") // VENDOR | BUYER_ENTRY
+  reviewedById   String?
+  reviewedAt     DateTime?
+  quotation      Quotation           @relation("Versions", fields: [quotationId], references: [id], onDelete: Cascade)
+  activeFor      Quotation[]         @relation("ActiveVersion")
+  items          QuotationItem[]
+  documents      QuotationDocument[]
+  scores         ComparisonScore[]
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([quotationId, versionNo])
+}
+
+model QuotationItem {
+  id          String           @id @default(cuid()) @map("_id")
+  versionId   String
+  description String
+  unit        String?
+  quantity    Float
+  unitRate    Float
+  gstPercent  Float            @default(0)
+  amount      Float
+  version     QuotationVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+}
+
+model QuotationDocument {
+  id        String           @id @default(cuid()) @map("_id")
+  versionId String
+  fileKey   String
+  fileName  String
+  mimeType  String
+  size      Int
+  version   QuotationVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Comparison ─────────────────────────────
+
+model ComparisonRun {
+  id                  String            @id @default(cuid()) @map("_id")
+  rfqId               String
+  weights             Json
+  recommendedVendorId String?
+  runnerUpVendorId    String?
+  explanation         String?
+  whyNotCheapest      String?
+  splitSuggestion     Json?
+  respondedCount      Int
+  invitedCount        Int
+  isLatest            Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  rfq                 RFQ               @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  scores              ComparisonScore[]
+  approvalRequests    ApprovalRequest[]
+
+  @@index([rfqId, isLatest])
+}
+
+model ComparisonScore {
+  id                 String           @id @default(cuid()) @map("_id")
+  runId              String
+  vendorId           String
+  quotationVersionId String
+  landedCost         Float
+  priceScore         Float
+  deliveryScore      Float
+  proximityScore     Float
+  ratingScore        Float
+  commercialScore    Float
+  totalScore         Float
+  rank               Int?
+  disqualified       Boolean          @default(false)
+  disqualifyReason   String?
+  badges             String[]
+  run                ComparisonRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  version            QuotationVersion @relation(fields: [quotationVersionId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Approval ─────────────────────────────
+
+model ApprovalRequest {
+  id                  String          @id @default(cuid()) @map("_id")
+  rfqId               String
+  projectId           String
+  comparisonRunId     String?
+  recommendedVendorId String?
+  selectedVendorId    String?
+  amount              Float
+  status              ApprovalStatus  @default(PENDING)
+  requestedById       String?
+  note                String?
+  overrideReason      String?
+  splitAward          Json?
+  createdAt           DateTime        @default(now())
+  decidedAt           DateTime?
+  rfq                 RFQ             @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  project             Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  comparisonRun       ComparisonRun?  @relation(fields: [comparisonRunId], references: [id])
+  requestedBy         User?           @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
+  steps               ApprovalStep[]
+  purchaseOrders      PurchaseOrder[]
+
+  @@index([projectId, status])
+}
+
+model ApprovalStep {
+  id         String          @id @default(cuid()) @map("_id")
+  requestId  String
+  level      Int
+  label      String
+  approverId String?
+  status     ApprovalStatus  @default(PENDING)
+  comment    String?
+  decidedAt  DateTime?
+  request    ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  approver   User?           @relation(fields: [approverId], references: [id])
+}
+
+// ───────────────────────────── Purchase order → delivery → GRN ─────────────────────────────
+
+model PurchaseOrder {
+  id                   String            @id @default(cuid()) @map("_id")
+  number               String            @unique
+  projectId            String
+  rfqId                String?
+  vendorId             String
+  quotationVersionId   String?
+  approvalRequestId    String?
+  status               POStatus          @default(DRAFT)
+  subtotal             Float
+  gstTotal             Float
+  freight              Float             @default(0)
+  otherCharges         Float             @default(0)
+  total                Float
+  paymentTerms         String?
+  creditDays           Int               @default(0)
+  expectedDeliveryDate DateTime
+  promisedDeliveryDate DateTime?
+  deliveryAddress      String
+  terms                String?
+  pdfKey               String?
+  vendorTokenHash      String?
+  vendorTokenCipher    String?
+  tokenExpiresAt       DateTime?
+  sentAt               DateTime?
+  acceptedAt           DateTime?
+  changeRequestNote    String?
+  deliveredAt          DateTime?
+  closedAt             DateTime?
+  cancelledAt          DateTime?
+  createdById          String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  project              Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  rfq                  RFQ?              @relation(fields: [rfqId], references: [id])
+  vendor               Vendor            @relation(fields: [vendorId], references: [id])
+  quotationVersion     QuotationVersion? @relation(fields: [quotationVersionId], references: [id])
+  approvalRequest      ApprovalRequest?  @relation(fields: [approvalRequestId], references: [id])
+  createdBy            User?             @relation("POCreatedBy", fields: [createdById], references: [id])
+
+  items           POItem[]
+  deliveryUpdates DeliveryUpdate[]
+  grns            GRN[]
+  returnRequests  ReturnRequest[]
+  rating          VendorRating?
+
+  @@index([projectId, status])
+  @@index([vendorId])
+  @@index([vendorTokenHash])
+}
+
+model POItem {
+  id          String        @id @default(cuid()) @map("_id")
+  poId        String
+  materialId  String
+  description String
+  quantity    Float
+  unit        String
+  unitRate    Float
+  gstPercent  Float
+  amount      Float
+  receivedQty Float         @default(0)
+  acceptedQty Float         @default(0)
+  po          PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  material    Material      @relation(fields: [materialId], references: [id])
+  grnItems    GRNItem[]
+}
+
+model DeliveryUpdate {
+  id          String         @id @default(cuid()) @map("_id")
+  poId        String
+  source      String // VENDOR | BUYER
+  status      DeliveryStatus
+  vehicleNo   String?
+  driverName  String?
+  driverPhone String?
+  eta         DateTime?
+  note        String?
+  createdAt   DateTime       @default(now())
+  po          PurchaseOrder  @relation(fields: [poId], references: [id], onDelete: Cascade)
+}
+
+model GRN {
+  id           String          @id @default(cuid()) @map("_id")
+  number       String          @unique
+  poId         String
+  projectId    String
+  receivedAt   DateTime
+  challanNo    String?
+  challanKey   String?
+  receivedById String?
+  remarks      String?
+  createdAt    DateTime        @default(now())
+  po           PurchaseOrder   @relation(fields: [poId], references: [id], onDelete: Cascade)
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  receivedBy   User?           @relation(fields: [receivedById], references: [id])
+  items        GRNItem[]
+  qualityCheck QualityCheck?
+  returns      ReturnRequest[]
+}
+
+model GRNItem {
+  id              String   @id @default(cuid()) @map("_id")
+  grnId           String
+  poItemId        String
+  materialId      String
+  deliveredQty    Float
+  acceptedQty     Float
+  rejectedQty     Float
+  rejectionReason String?
+  grn             GRN      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  poItem          POItem   @relation(fields: [poItemId], references: [id])
+  material        Material @relation(fields: [materialId], references: [id])
+}
+
+model QualityCheck {
+  id               String   @id @default(cuid()) @map("_id")
+  grnId            String   @unique
+  specMatch        Boolean
+  noDamage         Boolean
+  packagingOk      Boolean
+  testCertProvided Boolean
+  certKey          String?
+  photoKeys        String[]
+  notes            String?
+  grn              GRN      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+}
+
+model ReturnRequest {
+  id         String        @id @default(cuid()) @map("_id")
+  grnId      String
+  poId       String
+  vendorId   String
+  materialId String
+  qty        Float
+  reason     String
+  status     ReturnStatus  @default(OPEN)
+  createdAt  DateTime      @default(now())
+  resolvedAt DateTime?
+  grn        GRN           @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  po         PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  vendor     Vendor        @relation(fields: [vendorId], references: [id])
+  material   Material      @relation(fields: [materialId], references: [id])
+}
+
+// ───────────────────────────── Ratings ─────────────────────────────
+
+model VendorRating {
+  id             String                  @id @default(cuid()) @map("_id")
+  vendorId       String
+  projectId      String
+  poId           String                  @unique
+  totalScore     Float // 0–100
+  stars          Float // 0–5
+  feedback       String?
+  overriddenById String?
+  createdAt      DateTime                @default(now())
+  vendor         Vendor                  @relation(fields: [vendorId], references: [id])
+  project        Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  po             PurchaseOrder           @relation(fields: [poId], references: [id], onDelete: Cascade)
+  criteria       VendorRatingCriterion[]
+
+  @@index([vendorId, createdAt])
+}
+
+model VendorRatingCriterion {
+  id         String       @id @default(cuid()) @map("_id")
+  ratingId   String
+  key        String // PRICE | DELIVERY | QUALITY | RESPONSIVENESS | COMPLIANCE
+  weight     Float
+  autoScore  Float // 0–100
+  adjustment Float        @default(0) // stars, −1..+1
+  finalScore Float // 0–100
+  comment    String?
+  details    Json?
+  rating     VendorRating @relation(fields: [ratingId], references: [id], onDelete: Cascade)
+
+  @@unique([ratingId, key])
+}
+
+// ───────────────────────────── Market rates ─────────────────────────────
+
+model MarketRateSnapshot {
+  id         String   @id @default(cuid()) @map("_id")
+  materialId String
+  projectId  String
+  provider   String
+  query      String
+  results    Json
+  error      String?
+  fetchedAt  DateTime @default(now())
+  expiresAt  DateTime
+  material   Material @relation(fields: [materialId], references: [id])
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([materialId, projectId, fetchedAt])
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+model Notification {
+  id        String    @id @default(cuid()) @map("_id")
+  userId    String
+  projectId String?
+  type      String
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model EmailLog {
+  id             String      @id @default(cuid()) @map("_id")
+  idempotencyKey String      @unique
+  to             String[]
+  subject        String
+  html           String
+  text           String?
+  attachments    Json        @default("[]")
+  status         EmailStatus @default(QUEUED)
+  provider       String?
+  providerId     String?
+  error          String?
+  attempts       Int         @default(0)
+  nextAttemptAt  DateTime    @default(now())
+  relatedType    String?
+  relatedId      String?
+  projectId      String?
+  createdAt      DateTime    @default(now())
+  sentAt         DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([relatedType, relatedId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid()) @map("_id")
+  actorId    String?
+  actorLabel String
+  projectId  String?
+  entityType String
+  entityId   String
+  action     String
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([projectId, createdAt])
+}
+
+model SystemSetting {
+  key       String   @id @map("_id")
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Job {
+  id        String    @id @default(cuid()) @map("_id")
+  type      String
+  payload   Json
+  status    JobStatus @default(PENDING)
+  runAt     DateTime  @default(now())
+  attempts  Int       @default(0)
+  lastError String?
+  dedupeKey String?
+  createdAt DateTime  @default(now())
+  doneAt    DateTime?
+
+  @@index([status, runAt])
+  @@index([dedupeKey])
+}
+
+model Counter {
+  key   String @id @map("_id")
+  value Int    @default(0)
+}
