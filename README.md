@@ -162,6 +162,16 @@ Stars = score Ã· 20. Rolling rating with exponential decay (0.8). Grades: â�
 3. Create the first admin: `npm run create-admin -- you@nyati.in "Your Name" "a-strong-password"`. Then sign in and add users, projects, vendors and materials from the app (CSV import is available for vendors and materials).
 4. `npm run build && npm start` behind a reverse proxy (Nginx or Caddy) with HTTPS.
 
+### Deploying on Render (or any HTTPS host)
+
+- **Build command:** `npm install && npm run build` · **Start command:** `npm start` · **Node:** 22 or later (set `NODE_VERSION=22` if needed).
+- **Environment variables:** copy every value from your `.env`, then change:
+  - `NEXTAUTH_URL` and `APP_URL` → your public address, e.g. `https://nyati-inventory.onrender.com` (https, no trailing slash);
+  - `NEXTAUTH_SECRET` → a long random value; keep it unchanged afterwards, because changing it signs everyone out and breaks vendor links already sent.
+- **MongoDB Atlas → Network Access:** allow `0.0.0.0/0`. Render's outgoing IPs change, so a single IP won't work.
+- **First admin:** from your machine (same `.env` database), run `npm run create-admin -- you@nyati.in "Your Name" "password"`.
+- **If sign-in fails, open `https://<your-app>/api/health`.** It lists exactly what's wrong (missing secret, wrong `NEXTAUTH_URL`, database unreachable, no admin user) without showing any secrets.
+
 ## Defaults chosen (configurable)
 
 - Currency INR; money stored as numbers rounded to 2 decimals; dates in UTC, shown in Asia/Kolkata.

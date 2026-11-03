@@ -6,10 +6,18 @@ import { redirect } from "next/navigation";
 import type { Role } from "@prisma/client";
 import { db } from "./db";
 import { rateLimit } from "./rate-limit";
+import { useSecureCookies, SESSION_COOKIE, sessionCookieOptions } from "./auth-cookies";
+
+/** Error codes passed to the login form (NextAuth forwards the thrown message as `error`). */
+export const LOGIN_ERRORS = { RATE_LIMITED: "RATE_LIMITED", SERVER: "SERVER_UNAVAILABLE" } as const;
 
 export const authOptions: NextAuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt", maxAge: 60 * 60 * 12 },
   pages: { signIn: "/login" },
+  // Must match the middleware (see auth-cookies.ts), otherwise logins loop behind HTTPS proxies.
+  useSecureCookies,
+  cookies: { sessionToken: { name: SESSION_COOKIE, options: sessionCookieOptions } },
   providers: [
     CredentialsProvider({
       name: "Email",
@@ -17,8 +25,16 @@ export const authOptions: NextAuthOptions = {
       async authorize(creds) {
         const email = String(creds?.email ?? "").toLowerCase().trim();
         const password = String(creds?.password ?? "");
-        if (!email || !password || !rateLimit(`login:${email}`, 10, 5 * 60_000)) return null;
-        const user = await db.user.findUnique({ where: { email } });
+        if (!email || !password) return null;
+        if (!rateLimit(`login:${email}`, 10, 5 * 60_000)) throw new Error(LOGIN_ERRORS.RATE_LIMITED);
+        let user;
+        try {
+          user = await db.user.findUnique({ where: { email } });
+        } catch (e) {
+          // Database unreachable (wrong MONGODB_URI, Atlas IP not allowed, …): say so instead of "wrong password".
+          console.error("[auth] database error during login:", (e as Error).message);
+          throw new Error(LOGIN_ERRORS.SERVER);
+        }
         if (!user || !user.isActive || user.deletedAt) return null;
         if (!(await bcrypt.compare(password, user.passwordHash))) return null;
         return { id: user.id, name: user.name, email: user.email, role: user.role };
