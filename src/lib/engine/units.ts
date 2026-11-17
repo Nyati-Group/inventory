@@ -84,18 +84,35 @@ export function sameDimension(a: string, b: string) {
   return !!ca && !!cb && UNITS[ca].dim === UNITS[cb].dim;
 }
 
+/**
+ * Dimension and base-unit factor of a unit. Besides plain units it understands pack sizes as written on
+ * web listings and quotations: "50 kg bag", "40kg bag", "20 L can", "per 1000 nos", "25 kg".
+ */
+export function unitInfo(u: string | null | undefined): { dim: Dim; factor: number } | null {
+  if (!u) return null;
+  const c = canonicalUnit(u);
+  if (c) return UNITS[c];
+  const s = u.trim().toLowerCase().replace(/^per\s+/, "").replace(/^\/\s*/, "");
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*([a-z³.]+(?:\s[a-z]+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const base = canonicalUnit(m[2]) ?? canonicalUnit(m[2].split(/\s/)[0]);
+  if (!base || !(n > 0)) return null;
+  return { dim: UNITS[base].dim, factor: n * UNITS[base].factor };
+}
+
 /** Convert a quantity expressed in `from` units to `to` units. Returns null if incompatible. */
 export function convertQty(q: number, from: string, to: string): number | null {
-  const cf = canonicalUnit(from);
-  const ct = canonicalUnit(to);
-  if (!cf || !ct || UNITS[cf].dim !== UNITS[ct].dim) return null;
-  return (q * UNITS[cf].factor) / UNITS[ct].factor;
+  const cf = unitInfo(from);
+  const ct = unitInfo(to);
+  if (!cf || !ct || cf.dim !== ct.dim) return null;
+  return (q * cf.factor) / ct.factor;
 }
 
 /** Convert a rate (₹ per `from`) into ₹ per `to`. Returns null if incompatible. */
 export function convertRate(rate: number, from: string, to: string): number | null {
-  const cf = canonicalUnit(from);
-  const ct = canonicalUnit(to);
-  if (!cf || !ct || UNITS[cf].dim !== UNITS[ct].dim) return null;
-  return (rate * UNITS[ct].factor) / UNITS[cf].factor;
+  const cf = unitInfo(from);
+  const ct = unitInfo(to);
+  if (!cf || !ct || cf.dim !== ct.dim) return null;
+  return (rate * ct.factor) / cf.factor;
 }

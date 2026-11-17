@@ -108,9 +108,9 @@ See `.env.example`.
 | `VENDOR_PORTAL_URL`, `VENDOR_LINK_GRACE_HOURS`, `VENDOR_PO_LINK_DAYS` | vendor links (see above) | `APP_URL`, 24 h, 120 days |
 | `DEMO_MODE` | initial demo-mode value (toggle later in System Settings) | `true` |
 | `EMAIL_PROVIDER` = `smtp` \| `resend`, `EMAIL_FROM`, `SMTP_*`, `RESEND_API_KEY` | outgoing email | failures are logged and retried |
-| `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`) | quotation reading (text, PDF, scanned PDFs, photos) and market-price extraction | rule-based extractor; scanned PDFs and photos go to manual review |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`) | quotation reading (text, PDF, scanned PDFs, photos), auto-filling the vendor quote form on upload, and live market-rate search | rule-based extractor; scanned PDFs and photos go to manual review |
 | `MAPS_PROVIDER` = `google` \| `ors` \| `haversine`, `GOOGLE_MAPS_API_KEY`, `ORS_API_KEY` | geocoding + driving distance | straight-line distance Ã— 1.3 road factor |
-| `MARKET_RATE_PROVIDER` = `tavily` \| `serper` \| `demo`, `TAVILY_API_KEY`, `SERPER_API_KEY` | online market rates | demo provider, clearly labelled as simulated |
+| `MARKET_RATE_PROVIDER` = `gemini` (default when `GEMINI_API_KEY` is set: Gemini + Google Search grounding) \| `tavily` \| `serper` \| `demo`, `TAVILY_API_KEY`, `SERPER_API_KEY` | online market rates | demo provider, clearly labelled as simulated |
 | `STORAGE_DRIVER` = `local` \| `s3`, `S3_*` | file storage | `./.data/uploads` |
 | `CRON_SECRET` | protects `/api/cron` | endpoint disabled |
 

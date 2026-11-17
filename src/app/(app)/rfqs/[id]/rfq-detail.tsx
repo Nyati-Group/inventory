@@ -10,7 +10,6 @@ import { Card, Badge, StatusBadge, EmptyState } from "@/components/ui/misc";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, ConfirmDialog } from "@/components/ui/dialog";
 import { Field, Input, Textarea, Select } from "@/components/ui/form";
-import { LocalUrlWarning } from "@/components/vendor-link-box";
 import { resendRfqEmail, regenerateVendorLink, extendDeadline, sendNegotiation, cancelRfq, reparseQuotation, enterQuotationForVendor, decideApproval } from "@/server/actions/rfq";
 import { cn, fmtDateTime, inr, qty } from "@/lib/utils";
 import { Comparison, type ComparisonProps } from "./comparison";
@@ -86,7 +85,6 @@ export function RfqDetail(p: {
   approvals: ApprovalView[];
   canManage: boolean;
   canDecide: boolean;
-  portalUrlIsLocal: boolean;
   audit: { id: string; at: string; actor: string; action: string; entity: string }[];
 }) {
   const responded = p.vendors.filter((v) => v.status === "RESPONDED").length;
@@ -145,7 +143,7 @@ function useAct() {
   return { pending, act };
 }
 
-function VendorsTab({ rfq, vendors, canManage, portalUrlIsLocal }: { rfq: RfqLite; vendors: VendorRow[]; canManage: boolean; portalUrlIsLocal: boolean }) {
+function VendorsTab({ rfq, vendors, canManage }: { rfq: RfqLite; vendors: VendorRow[]; canManage: boolean }) {
   const { pending, act } = useAct();
   const [regen, setRegen] = React.useState<VendorRow | null>(null);
   const [regenResend, setRegenResend] = React.useState(true);
@@ -230,7 +228,6 @@ function VendorsTab({ rfq, vendors, canManage, portalUrlIsLocal }: { rfq: RfqLit
         </table>
       </div>
 
-      {canManage && portalUrlIsLocal && <div className="px-4 pb-3"><LocalUrlWarning /></div>}
       <ConfirmDialog
         open={!!regen}
         onOpenChange={(o) => !o && setRegen(null)}

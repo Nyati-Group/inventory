@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { num, numOrNull, inr, fmtDate, fmtDateTime, qty } from "@/lib/utils";
 import { signedUrl } from "@/lib/storage";
 import { decrypt } from "@/lib/tokens";
-import { poVendorLink, whatsappShareUrl, portalUrlIsLocal } from "@/lib/vendor-links";
+import { poVendorLink, whatsappShareUrl } from "@/lib/vendor-links";
 import { poStage } from "@/lib/stage";
 import { PageHeader, Card, Stepper, StatusBadge, Badge, Stars, EmptyState } from "@/components/ui/misc";
 import { RatingBreakdown } from "@/components/rating-widgets";
@@ -78,7 +78,6 @@ export default async function PoPage({ params }: { params: { id: string } }) {
           description={`${po.vendor.name} uses this link to accept the PO, request a change and post dispatch details. Valid until ${fmtDate(po.tokenExpiresAt)}.`}
           link={vendorLink}
           whatsappUrl={po.vendor.whatsapp || po.vendor.phone ? whatsappShareUrl(po.vendor.whatsapp ?? po.vendor.phone, `NYATI Purchase Order ${po.number}: please accept and share dispatch details here: ${vendorLink}`) : null}
-          localWarning={portalUrlIsLocal()}
         />
       )}
 

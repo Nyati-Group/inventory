@@ -1,4 +1,4 @@
-import { ApiError, GoogleGenAI } from "@google/genai";
+import { ApiError, GoogleGenAI, ThinkingLevel } from "@google/genai";
 import type { ZodType } from "zod";
 
 // Google Gemini (GEMINI_API_KEY) for quotation extraction and market-price extraction.
@@ -36,7 +36,16 @@ async function withRetry<T>(call: () => Promise<T>): Promise<T> {
  * Ask Gemini for JSON matching `schema` (structured output via responseJsonSchema), validate with zod,
  * retry once on invalid output.
  */
-export async function llmJson<T>(opts: { system: string; parts: LlmPart[]; schema: Record<string, unknown>; validate: ZodType<T> }): Promise<T> {
+export async function llmJson<T>(opts: {
+  system: string;
+  parts: LlmPart[];
+  schema: Record<string, unknown>;
+  validate: ZodType<T>;
+  /** Let Gemini search Google before answering (grounded, live web results). */
+  webSearch?: boolean;
+  /** Low thinking budget: much faster for straightforward extraction (the vendor is waiting on the form). */
+  fast?: boolean;
+}): Promise<T> {
   if (!llmAvailable()) throw new Error("GEMINI_API_KEY is not configured");
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -49,7 +58,9 @@ export async function llmJson<T>(opts: { system: string; parts: LlmPart[]; schem
           systemInstruction: opts.system,
           responseMimeType: "application/json",
           responseJsonSchema: opts.schema,
-          temperature: 0,
+          temperature: opts.webSearch ? undefined : 0,
+          tools: opts.webSearch ? [{ googleSearch: {} }] : undefined,
+          thinkingConfig: opts.fast ? { thinkingLevel: ThinkingLevel.LOW } : undefined,
         },
       }),
     );

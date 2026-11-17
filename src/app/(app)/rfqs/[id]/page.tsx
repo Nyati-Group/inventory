@@ -5,7 +5,7 @@ import { assertProjectAccess } from "@/lib/project-context";
 import { db } from "@/lib/db";
 import { num, numOrNull, fmtDate, fmtDateTime, qty } from "@/lib/utils";
 import { decrypt } from "@/lib/tokens";
-import { rfqVendorLink, whatsappShareUrl, portalUrlIsLocal } from "@/lib/vendor-links";
+import { rfqVendorLink, whatsappShareUrl } from "@/lib/vendor-links";
 import { signedUrl } from "@/lib/storage";
 import { comparisonInputs } from "@/lib/services/comparison";
 import { marketStats, type MarketRate } from "@/lib/market-rates";
@@ -165,7 +165,6 @@ export default async function RfqPage({ params, searchParams }: { params: { id: 
           steps: a.steps.map((s) => ({ id: s.id, level: s.level, label: s.label, approver: s.approver?.name ?? "—", status: s.status, comment: s.comment, decidedAt: s.decidedAt?.toISOString() ?? null })),
         }))}
         canManage={canManage}
-        portalUrlIsLocal={portalUrlIsLocal()}
         canDecide={!!currentStep && (currentStep.approverId === user.id || user.role === "ADMIN")}
         audit={auditRows.map((a) => ({ id: a.id, at: a.createdAt.toISOString(), actor: a.actorLabel, action: a.action, entity: a.entityType }))}
       />

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, FileText, FileType, Type, Image as ImageIcon } from "lucide-react";
+import { CheckCircle2, FileText, FileType, Type, Image as ImageIcon, Loader2, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/misc";
 import { Field, Input, Textarea, Select } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,10 @@ const METHODS = [
   { id: "IMAGE", label: "Image / Excel", icon: ImageIcon, accept: ".png,.jpg,.jpeg,.xlsx" },
 ] as const;
 
-const DECLINE = ["Out of stock", "Cannot deliver to this location", "Price not workable", "Cannot meet the delivery date", "Other"];
+const PREFILL_FIELDS = ["unitRate", "quantity", "gstPercent", "freight", "loading", "total", "deliveryDays", "deliveryDate", "validityDays", "paymentTerms", "warranty", "remarks"] as const;
+type Prefill = { fields: Partial<Record<(typeof PREFILL_FIELDS)[number], string | number | null>>; confidence: number; method: "ai" | "rules" | "none"; notes: string[] };
+
+const DECLINE =["Out of stock", "Cannot deliver to this location", "Price not workable", "Cannot meet the delivery date", "Other"];
 
 export function VendorQuoteForm({ token, unit, quantity, isRevision }: { token: string; unit: string; quantity: number; isRevision: boolean }) {
   const router = useRouter();
@@ -27,10 +30,48 @@ export function VendorQuoteForm({ token, unit, quantity, isRevision }: { token: 
   const [declineOpen, setDeclineOpen] = React.useState(false);
   const [declineReason, setDeclineReason] = React.useState(DECLINE[0]);
   const [declineOther, setDeclineOther] = React.useState("");
+  const formRef = React.useRef<HTMLFormElement>(null);
+  const [reading, setReading] = React.useState(false);
+  const [prefill, setPrefill] = React.useState<{ filled: string[]; notes: string[]; confidence: number; method: Prefill["method"] } | null>(null);
+  const autoFilled = React.useRef(new Set<string>());
+  const readSeq = React.useRef(0);
+
+  /** Read the quotation (file or pasted text) on the server and fill the key-figure fields. */
+  async function readQuotation(src: { file?: File; text?: string }) {
+    const form = formRef.current;
+    if (!form) return;
+    if (src.file && src.file.size > 10 * 1024 * 1024) return setError("File is larger than 10 MB.");
+    const seq = ++readSeq.current;
+    setReading(true);
+    setPrefill(null);
+    const fd = new FormData();
+    if (src.file) fd.set("file", src.file);
+    if (src.text) fd.set("text", src.text);
+    const res = await fetch(`/api/vendor/rfq/${token}/prefill`, { method: "POST", body: fd }).catch(() => null);
+    const j = (await res?.json().catch(() => null)) as (Prefill & { error?: string }) | null;
+    if (seq !== readSeq.current) return; // a newer file was chosen meanwhile
+    setReading(false);
+    if (!res?.ok || !j || j.error) return setPrefill({ filled: [], notes: [j?.error ?? "Could not read the quotation — please type the key figures."], confidence: 0, method: "none" });
+    const filled: string[] = [];
+    for (const name of PREFILL_FIELDS) {
+      const el = form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement | null;
+      const v = j.fields[name];
+      if (!el || v === null || v === undefined || v === "") continue;
+      // Never overwrite something the vendor typed themselves; do replace values we filled earlier.
+      if (el.value && !autoFilled.current.has(name)) continue;
+      el.value = String(v);
+      autoFilled.current.add(name);
+      filled.push(name);
+    }
+    setPrefill({ filled, notes: j.notes, confidence: j.confidence, method: j.method });
+  }
+
+  const af = (name: string) => (prefill?.filled.includes(name) ? "border-brand-600 bg-brand-100/60" : undefined);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    if (reading) return setError("Please wait — we're still reading your quotation.");
     const fd = new FormData(e.currentTarget);
     fd.set("method", method === "IMAGE" ? ((fd.get("file") as File)?.name?.toLowerCase().endsWith(".xlsx") ? "XLSX" : "IMAGE") : method);
     const file = fd.get("file") as File | null;
@@ -70,7 +111,12 @@ export function VendorQuoteForm({ token, unit, quantity, isRevision }: { token: 
 
   return (
     <Card title={isRevision ? "Submit a revised quotation" : "Submit your quotation"}>
-      <form onSubmit={onSubmit} className="space-y-5">
+      <form
+        ref={formRef}
+        onSubmit={onSubmit}
+        onInput={(e) => autoFilled.current.delete((e.target as HTMLInputElement).name)}
+        className="space-y-5"
+      >
         <div role="tablist" aria-label="Submission method" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {METHODS.map((m, i) => (
             <button
@@ -89,29 +135,63 @@ export function VendorQuoteForm({ token, unit, quantity, isRevision }: { token: 
 
         {method === "TEXT" ? (
           <Field label="Your quotation" hint="Include rate, GST, freight, delivery time, payment terms and validity.">
-            <Textarea name="text" rows={8} placeholder={`Rate: Rs. ___ per ${unit}\nGST @ __%\nFreight: Rs. ___\nDelivery within __ days\nPayment terms: ___\nValidity: __ days`} />
+            <Textarea
+              name="text"
+              rows={8}
+              placeholder={`Rate: Rs. ___ per ${unit}\nGST @ __%\nFreight: Rs. ___\nDelivery within __ days\nPayment terms: ___\nValidity: __ days`}
+              onBlur={(e) => e.target.value.trim().length >= 30 && readQuotation({ text: e.target.value })}
+            />
           </Field>
         ) : (
-          <Field label="Quotation file" hint="Maximum 10 MB.">
-            <Input key={method} name="file" type="file" required accept={METHODS.find((m) => m.id === method)!.accept} className="py-1.5" />
+          <Field label="Quotation file" hint="Maximum 10 MB. We'll read it and fill in the key figures below for you to check.">
+            <Input
+              key={method}
+              name="file"
+              type="file"
+              required
+              accept={METHODS.find((m) => m.id === method)!.accept}
+              className="py-1.5"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) readQuotation({ file: f });
+              }}
+            />
           </Field>
+        )}
+
+        {reading && (
+          <p className="flex items-center gap-2 rounded-lg bg-brand-100 px-3 py-2 text-sm text-brand-800" role="status">
+            <Loader2 className="h-4 w-4 animate-spin" /> Reading your quotation and filling in the details…
+          </p>
+        )}
+        {prefill && !reading && (
+          <div className={cn("rounded-lg px-3 py-2 text-sm", prefill.filled.length ? "bg-brand-100 text-brand-800" : "bg-amber-50 text-amber-900")} role="status">
+            <div className="flex items-center gap-2 font-medium">
+              <Sparkles className="h-4 w-4" />
+              {prefill.filled.length
+                ? `Filled ${prefill.filled.length} field${prefill.filled.length === 1 ? "" : "s"} from your quotation (highlighted) — please check them before submitting.`
+                : "We couldn't find the key figures automatically — please fill them in below."}
+            </div>
+            {prefill.filled.length > 0 && prefill.confidence > 0 && prefill.confidence < 0.7 && <p className="mt-1 text-xs">Some values were hard to read — check the unit rate and totals carefully.</p>}
+            {prefill.notes.map((n) => <p key={n} className="mt-1 text-xs">{n}</p>)}
+          </div>
         )}
 
         <div>
           <div className="mb-2 text-sm font-semibold text-brand-800">Key figures <span className="font-normal text-muted">(optional, but helps us process your quote correctly)</span></div>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label={`Unit rate (₹ per ${unit}, excl. GST)`}><Input name="unitRate" type="number" step="any" min="0" inputMode="decimal" /></Field>
-            <Field label={`Quantity you can supply (${unit})`}><Input name="quantity" type="number" step="any" min="0" placeholder={String(quantity)} /></Field>
-            <Field label="GST %"><Input name="gstPercent" type="number" step="any" min="0" max="28" /></Field>
-            <Field label="Freight / transport (₹)"><Input name="freight" type="number" step="any" min="0" /></Field>
-            <Field label="Loading charges (₹)"><Input name="loading" type="number" step="any" min="0" /></Field>
-            <Field label="Total price (₹, incl. all)"><Input name="total" type="number" step="any" min="0" /></Field>
-            <Field label="Delivery time (days)"><Input name="deliveryDays" type="number" min="0" /></Field>
-            <Field label="…or promised delivery date"><Input name="deliveryDate" type="date" /></Field>
-            <Field label="Validity (days)"><Input name="validityDays" type="number" min="0" /></Field>
-            <Field label="Payment terms" className="sm:col-span-2"><Input name="paymentTerms" placeholder="e.g. 30 days credit" /></Field>
-            <Field label="Warranty"><Input name="warranty" /></Field>
-            <Field label="Remarks" className="sm:col-span-3"><Textarea name="remarks" rows={2} /></Field>
+            <Field label={`Unit rate (₹ per ${unit}, excl. GST)`}><Input name="unitRate" type="number" step="any" min="0" inputMode="decimal" className={af("unitRate")} /></Field>
+            <Field label={`Quantity you can supply (${unit})`}><Input name="quantity" type="number" step="any" min="0" placeholder={String(quantity)} className={af("quantity")} /></Field>
+            <Field label="GST %"><Input name="gstPercent" type="number" step="any" min="0" max="28" className={af("gstPercent")} /></Field>
+            <Field label="Freight / transport (₹)"><Input name="freight" type="number" step="any" min="0" className={af("freight")} /></Field>
+            <Field label="Loading charges (₹)"><Input name="loading" type="number" step="any" min="0" className={af("loading")} /></Field>
+            <Field label="Total price (₹, incl. all)"><Input name="total" type="number" step="any" min="0" className={af("total")} /></Field>
+            <Field label="Delivery time (days)"><Input name="deliveryDays" type="number" min="0" className={af("deliveryDays")} /></Field>
+            <Field label="…or promised delivery date"><Input name="deliveryDate" type="date" className={af("deliveryDate")} /></Field>
+            <Field label="Validity (days)"><Input name="validityDays" type="number" min="0" className={af("validityDays")} /></Field>
+            <Field label="Payment terms" className="sm:col-span-2"><Input name="paymentTerms" placeholder="e.g. 30 days credit" className={af("paymentTerms")} /></Field>
+            <Field label="Warranty"><Input name="warranty" className={af("warranty")} /></Field>
+            <Field label="Remarks" className="sm:col-span-3"><Textarea name="remarks" rows={2} className={af("remarks")} /></Field>
           </div>
         </div>
 

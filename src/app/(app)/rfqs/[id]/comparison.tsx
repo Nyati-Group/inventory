@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Award, ArrowLeftRight, RefreshCw, Send, Sparkles, SplitSquareHorizontal, Info } from "lucide-react";
+import { WrappedTick } from "@/components/chart-ticks";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Legend, ReferenceLine } from "recharts";
 import { scoreQuotes, type QuoteInput, type ScoringContext, type Weights, type ScoredQuote } from "@/lib/engine/scoring";
 import { Card, Badge, Stars, EmptyState } from "@/components/ui/misc";
@@ -118,9 +119,9 @@ export function Comparison(p: ComparisonProps) {
         <Card title="Landed cost by vendor">
           <div className="h-64">
             <ResponsiveContainer>
-              <BarChart data={result.scored.map((s) => ({ name: short(s.vendorName), landed: s.landedCost, id: s.vendorId, dq: s.disqualified }))} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+              <BarChart data={result.scored.map((s) => ({ name: s.vendorName, landed: s.landedCost, id: s.vendorId, dq: s.disqualified }))} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                 <CartesianGrid stroke={BRAND.grid} vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: BRAND.muted }} stroke={BRAND.grid} interval={0} />
+                <XAxis dataKey="name" tick={<WrappedTick />} height={36} stroke={BRAND.grid} interval={0} />
                 <YAxis tickFormatter={(v) => `₹${(v / 1e5).toFixed(1)}L`} tick={{ fontSize: 11, fill: BRAND.muted }} stroke={BRAND.grid} width={56} />
                 <Tooltip formatter={(v: number) => [inr(v, false), "Landed cost"]} cursor={{ fill: BRAND.tint }} />
                 <Bar dataKey="landed" radius={[4, 4, 0, 0]} maxBarSize={44}>
@@ -149,9 +150,9 @@ export function Comparison(p: ComparisonProps) {
         <Card title={`Unit rate vs history & market (₹/${p.rfq.unit})`}>
           <div className="h-64">
             <ResponsiveContainer>
-              <BarChart data={result.scored.map((s) => ({ name: short(s.vendorName), rate: s.unitRate, id: s.vendorId }))} margin={{ top: 16, right: 8, bottom: 0, left: 8 }}>
+              <BarChart data={result.scored.map((s) => ({ name: s.vendorName, rate: s.unitRate, id: s.vendorId }))} margin={{ top: 16, right: 8, bottom: 0, left: 8 }}>
                 <CartesianGrid stroke={BRAND.grid} vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 11, fill: BRAND.muted }} stroke={BRAND.grid} interval={0} />
+                <XAxis dataKey="name" tick={<WrappedTick />} height={36} stroke={BRAND.grid} interval={0} />
                 <YAxis tick={{ fontSize: 11, fill: BRAND.muted }} stroke={BRAND.grid} width={56} domain={["auto", "auto"]} />
                 <Tooltip formatter={(v: number) => [inr(v), "Quoted rate"]} cursor={{ fill: BRAND.tint }} />
                 <Bar dataKey="rate" radius={[4, 4, 0, 0]} maxBarSize={44}>

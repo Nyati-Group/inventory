@@ -13,6 +13,7 @@ export interface MarketRate {
   unit: string; // as quoted
   normalisedRate: number | null; // ₹ per material unit
   sourceUrl: string | null;
+  sourceSite?: string | null;
   availability: string | null;
   distanceKm?: number | null;
   inVendorBook?: boolean;
@@ -153,6 +154,74 @@ class SerperProvider implements MarketRateProvider {
   }
 }
 
+const WebPriceList = z.object({
+  prices: z.array(
+    z.object({
+      supplier: z.string(),
+      city: z.string(),
+      rate: z.number(),
+      unit: z.string(),
+      source_site: z.string(),
+      source_url: z.string(),
+      availability: z.string(),
+    }),
+  ),
+});
+
+/** Gemini with Google Search grounding: searches the live web and returns the listings it found. */
+class GeminiSearchProvider implements MarketRateProvider {
+  name = "gemini-search";
+  isDemo = false;
+  async search(m: MaterialQuery, city: string) {
+    const material = `${m.name}${m.spec ? ` (${m.spec})` : ""}`;
+    const out = await llmJson({
+      webSearch: true,
+      system:
+        "You find current indicative market prices for construction materials in India using Google Search. " +
+        "Only report prices you actually found on a web page in the search results (supplier sites, IndiaMART, TradeIndia, JustDial, dealer price lists, news). Never estimate or invent a price. " +
+        "Match the same material and grade; skip listings for a different grade or product. Prefer suppliers in or near the given city, then elsewhere in the same state. " +
+        `Rates are in INR, excluding GST where the page says so. If the listing is in the requested unit, set unit to exactly "${m.unit}"; otherwise give the unit as written (e.g. "50 kg bag", "tonne", "kg"). ` +
+        'source_site is the website name or domain (e.g. "indiamart.com"); source_url is the page link. availability: stock or delivery note if stated, else "". Return up to 8 listings; an empty list if none were found.',
+      parts: [{ text: `Material: ${material}. Category: ${m.category}. Requested unit: ${m.unit}. Project site: ${city}, India. Find current prices per ${m.unit}.` }],
+      schema: {
+        type: "object",
+        properties: {
+          prices: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                supplier: { type: "string" },
+                city: { type: "string" },
+                rate: { type: "number" },
+                unit: { type: "string" },
+                source_site: { type: "string" },
+                source_url: { type: "string" },
+                availability: { type: "string" },
+              },
+              required: ["supplier", "city", "rate", "unit", "source_site", "source_url", "availability"],
+            },
+          },
+        },
+        required: ["prices"],
+      },
+      validate: WebPriceList,
+    });
+    return out.prices
+      .filter((p) => p.rate > 0)
+      .map((p) => ({
+        supplier: p.supplier || p.source_site || "Online listing",
+        city: p.city || null,
+        rate: p.rate,
+        unit: p.unit || m.unit,
+        normalisedRate: convertRate(p.rate, p.unit || m.unit, m.unit),
+        sourceUrl: /^https?:\/\//.test(p.source_url) ? p.source_url : null,
+        sourceSite: p.source_site || null,
+        availability: p.availability || null,
+      }));
+  }
+}
+
 /**
  * Demo provider — used when no search API key is configured. Results are synthetic, derived from our own
  * purchase history, and are clearly labelled as demo data in the UI.
@@ -185,6 +254,8 @@ export function marketProvider(baseRate: number): MarketRateProvider {
   const p = process.env.MARKET_RATE_PROVIDER;
   if (p === "tavily" && process.env.TAVILY_API_KEY) return new TavilyProvider();
   if (p === "serper" && process.env.SERPER_API_KEY) return new SerperProvider();
+  // Gemini web search is the default whenever a Gemini key is set (unless MARKET_RATE_PROVIDER="demo").
+  if (p !== "demo" && llmAvailable()) return new GeminiSearchProvider();
   return new DemoProvider(baseRate);
 }
 
@@ -193,8 +264,10 @@ const TTL_MS = 24 * 3600_000;
 /** Cached (24 h) market rates for a material near a project. `force` bypasses the cache (Refresh button). */
 export async function getMarketRates(materialId: string, projectId: string, force = false) {
   if (!force) {
+    // Once a real search provider is configured, old simulated (demo) snapshots are not reused.
+    const live = !marketProvider(0).isDemo;
     const cached = await db.marketRateSnapshot.findFirst({
-      where: { materialId, projectId, expiresAt: { gt: new Date() } },
+      where: { materialId, projectId, expiresAt: { gt: new Date() }, ...(live ? { provider: { not: "demo" } } : {}) },
       orderBy: { fetchedAt: "desc" },
     });
     if (cached) return cached;

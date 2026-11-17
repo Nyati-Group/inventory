@@ -108,3 +108,34 @@ describe("vendor links", () => {
     expect(whatsappShareUrl("9822011223", "a b")).toBe("https://wa.me/919822011223?text=a%20b");
   });
 });
+
+describe("pack-size units from web listings", () => {
+  it("converts '50 kg bag' and '40kg bag' rates", () => {
+    expect(convertRate(350, "50 kg bag", "bag")).toBeCloseTo(350);
+    expect(convertRate(300, "40kg bag", "bag")).toBeCloseTo(375);
+    expect(convertRate(7, "kg", "50 kg bag")).toBeCloseTo(350);
+  });
+  it("converts '20 L can' and 'per 1000 nos'", () => {
+    expect(convertRate(2000, "20 L can", "litre")).toBeCloseTo(100);
+    expect(convertRate(8000, "per 1000 nos", "nos")).toBeCloseTo(8);
+  });
+  it("rejects unrelated units", () => {
+    expect(convertRate(100, "50 kg bag", "m3")).toBeNull();
+  });
+});
+
+import { wrapLabel } from "@/components/chart-ticks";
+describe("chart label wrapping", () => {
+  it("wraps vendor names onto two lines when there is room", () => {
+    expect(wrapLabel("Shree Ganesh Building Materials", 19)).toEqual(["Shree Ganesh", "Building Materials"]);
+  });
+  it("shortens with an ellipsis when the bar is narrow", () => {
+    const l = wrapLabel("Shree Ganesh Building Materials", 10);
+    expect(l).toHaveLength(2);
+    expect(l.every((x) => x.length <= 10)).toBe(true);
+    expect(l[1].endsWith("…")).toBe(true);
+  });
+  it("keeps short names intact", () => {
+    expect(wrapLabel("ACC", 10)).toEqual(["ACC"]);
+  });
+});

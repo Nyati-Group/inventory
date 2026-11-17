@@ -1,11 +1,11 @@
 "use client";
 
 import { toast } from "sonner";
-import { Copy, ExternalLink, MessageCircle, AlertTriangle } from "lucide-react";
+import { Copy, ExternalLink, MessageCircle } from "lucide-react";
 import { Button } from "./ui/button";
 
 /** Shows a vendor link with copy / open / WhatsApp share. */
-export function VendorLinkBox({ title, description, link, whatsappUrl, localWarning }: { title: string; description: string; link: string; whatsappUrl: string | null; localWarning: boolean }) {
+export function VendorLinkBox({ title, description, link, whatsappUrl }: { title: string; description: string; link: string; whatsappUrl: string | null }) {
   return (
     <section className="card p-4">
       <div className="mb-1 text-sm font-semibold text-brand-800">{title}</div>
@@ -16,16 +16,6 @@ export function VendorLinkBox({ title, description, link, whatsappUrl, localWarn
         <Button size="sm" variant="secondary" asChild><a href={link} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Open</a></Button>
         {whatsappUrl && <Button size="sm" variant="secondary" asChild><a href={whatsappUrl} target="_blank" rel="noreferrer"><MessageCircle className="h-4 w-4" /> WhatsApp</a></Button>}
       </div>
-      {localWarning && <LocalUrlWarning />}
     </section>
-  );
-}
-
-export function LocalUrlWarning() {
-  return (
-    <p className="mt-2 flex items-start gap-1.5 text-xs text-warning">
-      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-      This link points to a local address — vendors outside your network can't open it. Set VENDOR_PORTAL_URL (or APP_URL) to your public https domain.
-    </p>
   );
 }

@@ -89,6 +89,7 @@ const SYSTEM = `You extract supplier quotations for a construction company's pro
 Read the quotation and return the JSON fields exactly as quoted by the vendor. Rules:
 - Amounts are in INR; strip currency symbols and thousands separators ("1,23,450.00" → 123450).
 - Use 0 for a numeric field that is not stated, and "" for a text field that is not stated. Never invent values.
+- freight: transport/freight/cartage charges. loading_charges: loading, unloading or handling charges (add them together). other_charges: any other extra charges.
 - items: one entry per quoted line. unit_rate is the pre-tax rate per unit. amount = quantity × unit_rate as written.
 - delivery_days: days from order to delivery if stated; delivery_date: ISO date (YYYY-MM-DD) if a date is stated.
 - deviations_or_exclusions: anything that differs from the RFQ (partial quantity, different brand/grade, excluded unloading, price escalation clauses, etc.).
@@ -107,7 +108,7 @@ export async function llmExtract(
   parts.push({
     text: `${rfq}\n\nExtract the vendor's quotation${source.text ? ` below:\n\n<quotation>\n${source.text}\n</quotation>` : " from the attached document."}`,
   });
-  return llmJson({ system: SYSTEM, parts, schema: JSON_SCHEMA, validate: ExtractionSchema });
+  return llmJson({ system: SYSTEM, parts, schema: JSON_SCHEMA, validate: ExtractionSchema, fast: true });
 }
 
 // ─────────── Rule-based fallback (no API key / API failure) ───────────

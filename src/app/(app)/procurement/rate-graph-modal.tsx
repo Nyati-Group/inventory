@@ -3,6 +3,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { RefreshCw, ExternalLink, UserPlus, Info } from "lucide-react";
+import { WrappedTick } from "@/components/chart-ticks";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar, ReferenceLine, Cell, Legend } from "recharts";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -169,7 +170,7 @@ function MarketTab({ row, project, canRfq }: { row: MaterialRow; project: Projec
   if (!data) return <Skeleton className="h-80" />;
   const ours = row.rate;
   const results = data.results.filter((r) => r.normalisedRate);
-  const chart = results.map((r) => ({ name: r.supplier.length > 22 ? `${r.supplier.slice(0, 20)}…` : r.supplier, rate: r.normalisedRate! }));
+  const chart = results.map((r) => ({ name: r.supplier, rate: r.normalisedRate! }));
   const over = ours && data.stats ? ((ours - data.stats.avg) / data.stats.avg) * 100 : null;
 
   return (
@@ -194,6 +195,7 @@ function MarketTab({ row, project, canRfq }: { row: MaterialRow; project: Projec
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <span>
           Indicative market rates from public web sources — confirm with a formal quotation.
+          {data.provider === "gemini-search" && " Live results found by Google Search (via Gemini); cached for 24 h — use Refresh for a new search."}
           {data.isDemo && <strong> Demo data: no search provider is configured (set MARKET_RATE_PROVIDER and an API key), so these listings are simulated from our own purchase history.</strong>}
         </span>
       </p>
@@ -203,7 +205,7 @@ function MarketTab({ row, project, canRfq }: { row: MaterialRow; project: Projec
           <ResponsiveContainer>
             <BarChart data={chart} margin={{ top: 16, right: 16, bottom: 0, left: 8 }} barCategoryGap="30%">
               <CartesianGrid stroke={BRAND.grid} vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: BRAND.muted }} stroke={BRAND.grid} interval={0} />
+              <XAxis dataKey="name" tick={<WrappedTick />} height={36} stroke={BRAND.grid} interval={0} />
               <YAxis tickFormatter={(v) => `₹${Number(v).toLocaleString("en-IN")}`} tick={{ fontSize: 11, fill: BRAND.muted }} stroke={BRAND.grid} width={80} />
               <Tooltip formatter={(v: number) => [`${inr(v)}/${row.unit}`, "Market rate"]} cursor={{ fill: BRAND.tint }} />
               <Bar dataKey="rate" radius={[4, 4, 0, 0]} maxBarSize={48}>
@@ -239,7 +241,7 @@ function MarketTab({ row, project, canRfq }: { row: MaterialRow; project: Projec
                 <td className="td">{r.unit}</td>
                 <td className="td text-right tabular-nums">{r.normalisedRate ? inr(r.normalisedRate) : <span className="text-xs text-muted">unit mismatch</span>}</td>
                 <td className="td">{r.availability ?? "—"}</td>
-                <td className="td">{r.sourceUrl ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="link inline-flex items-center gap-1">Link <ExternalLink className="h-3 w-3" /></a> : <span className="text-xs text-muted">—</span>}</td>
+                <td className="td">{r.sourceUrl ? <a href={r.sourceUrl} target="_blank" rel="noreferrer" className="link inline-flex items-center gap-1">{r.sourceSite || "Link"} <ExternalLink className="h-3 w-3" /></a> : <span className="text-xs text-muted">{r.sourceSite || "—"}</span>}</td>
                 <td className="td text-xs text-muted">{fmtDate(data.fetchedAt)}</td>
                 <td className="td">
                   {r.inVendorBook ? (
