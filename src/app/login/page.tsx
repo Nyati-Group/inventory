@@ -32,20 +32,8 @@ export default async function LoginPage() {
         <div className="card p-6">
           <h1 className="text-lg font-semibold">Sign in to Procurement</h1>
           <p className="mb-4 text-sm text-muted">Use your NYATI account.</p>
-          <LoginForm />
+          <LoginForm demoMode={demoMode} />
         </div>
-        {demoMode && (
-          <div className="card mt-4 p-4 text-xs text-muted">
-            <div className="mb-2 font-semibold text-brand-800">Demo accounts (password: <code>nyati123</code>)</div>
-            <ul className="space-y-1">
-              <li><code>buyer@nyati.in</code> — Procurement Manager</li>
-              <li><code>approver@nyati.in</code> — Approver (Project Head)</li>
-              <li><code>finance@nyati.in</code> — Approver (Finance)</li>
-              <li><code>site@nyati.in</code> — Site / Store Engineer</li>
-            </ul>
-            <p className="mt-2">Admin: use the password set with <code>npm run create-admin</code>.</p>
-          </div>
-        )}
       </div>
     </main>
   );

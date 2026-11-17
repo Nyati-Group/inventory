@@ -27,10 +27,27 @@ function safeTarget(raw: string | null) {
   }
 }
 
-export function LoginForm() {
+const DEMO_PASSWORD = "nyati123";
+const DEMO_ACCOUNTS = [
+  { email: "buyer@nyati.in", role: "Procurement Manager" },
+  { email: "approver@nyati.in", role: "Approver (Project Head)" },
+  { email: "finance@nyati.in", role: "Approver (Finance)" },
+  { email: "site@nyati.in", role: "Site / Store Engineer" },
+];
+
+export function LoginForm({ demoMode = false }: { demoMode?: boolean }) {
   const params = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function pick(account: string) {
+    setEmail(account);
+    setPassword(DEMO_PASSWORD);
+    setError(null);
+    document.getElementById("password")?.focus();
+  }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -52,17 +69,37 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
-      <Field label="Email" htmlFor="email">
-        <Input id="email" name="email" type="email" autoComplete="email" required />
-      </Field>
-      <Field label="Password" htmlFor="password">
-        <Input id="password" name="password" type="password" autoComplete="current-password" required />
-      </Field>
-      {error && <p className="text-sm text-danger" role="alert">{error}</p>}
-      <Button type="submit" className="w-full" loading={loading}>
-        Sign in
-      </Button>
-    </form>
+    <>
+      <form onSubmit={onSubmit} className="space-y-3">
+        <Field label="Email" htmlFor="email">
+          <Input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        </Field>
+        <Field label="Password" htmlFor="password">
+          <Input id="password" name="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+        </Field>
+        {error && <p className="text-sm text-danger" role="alert">{error}</p>}
+        <Button type="submit" className="w-full" loading={loading}>
+          Sign in
+        </Button>
+      </form>
+      {demoMode && (
+        <div className="mt-5 border-t border-border pt-4">
+          <div className="mb-2 text-xs font-semibold text-brand-800">Demo accounts — click to fill in</div>
+          <div className="grid gap-1.5">
+            {DEMO_ACCOUNTS.map((a) => (
+              <button
+                key={a.email}
+                type="button"
+                onClick={() => pick(a.email)}
+                className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors hover:border-brand-600 hover:bg-brand-100 ${email === a.email ? "border-brand-600 bg-brand-100" : "border-border"}`}
+              >
+                <span className="font-medium text-brand-800">{a.role}</span>
+                <span className="text-muted">{a.email}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
   );
 }
