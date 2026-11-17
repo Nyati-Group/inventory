@@ -1008,3 +1008,14 @@ model Counter {
   key   String @id @map("_id")
   value Int    @default(0)
 }
+
+// Uploaded and generated files (quotations, RFQ/PO PDFs, challans, templates). Kept in MongoDB so the app works
+// on serverless hosts (Vercel) whose filesystem is read-only, and so every server instance sees the same files.
+model StoredFile {
+  id          String   @id @default(cuid()) @map("_id")
+  key         String   @unique
+  contentType String
+  size        Int
+  data        Bytes
+  createdAt   DateTime @default(now())
+}

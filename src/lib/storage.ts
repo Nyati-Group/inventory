@@ -3,7 +3,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { hmac, safeEqual } from "./tokens";
 
-/** File storage abstraction. `local` writes to ./.data/uploads; `s3` uses @aws-sdk/client-s3 if installed. */
+/**
+ * File storage abstraction (STORAGE_DRIVER): `db` (default) stores files in MongoDB; `local` writes to
+ * ./.data/uploads (single server with a writable disk only); `s3` uses @aws-sdk/client-s3 if installed.
+ */
 export interface StorageDriver {
   put(key: string, data: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer>;
@@ -103,7 +106,39 @@ class S3Driver implements StorageDriver {
   }
 }
 
-export const storage: StorageDriver = process.env.STORAGE_DRIVER === "s3" ? new S3Driver() : new LocalDriver();
+/**
+ * Files stored in MongoDB (StoredFile collection). Default driver: works on serverless hosts such as Vercel,
+ * where the app folder is read-only and /tmp is wiped between requests, and on Render/VMs alike.
+ * Files saved earlier by the local driver (./.data/uploads) are still readable as a fallback.
+ */
+class DbDriver implements StorageDriver {
+  private local = new LocalDriver();
+  async put(key: string, data: Buffer, contentType: string) {
+    const { db } = await import("./db");
+    await db.storedFile.upsert({
+      where: { key },
+      create: { key, contentType, size: data.length, data },
+      update: { contentType, size: data.length, data },
+    });
+  }
+  async get(key: string) {
+    const { db } = await import("./db");
+    const f = await db.storedFile.findUnique({ where: { key } });
+    if (f) return Buffer.from(f.data);
+    return this.local.get(key);
+  }
+}
+
+function pickDriver(): StorageDriver {
+  const d = process.env.STORAGE_DRIVER;
+  if (d === "s3") return new S3Driver();
+  // Serverless hosts (Vercel, AWS Lambda) have a read-only app folder — "local" can't work there.
+  const serverless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (d === "local" && !serverless) return new LocalDriver();
+  return new DbDriver();
+}
+
+export const storage: StorageDriver = pickDriver();
 
 export async function saveFile(prefix: string, name: string, data: Buffer, contentType: string) {
   const safe = name.replace(/[^\w.\-]+/g, "_").slice(-80);

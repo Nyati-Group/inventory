@@ -121,9 +121,10 @@ export async function submitQuotation(token: string, input: SubmissionInput, ip:
     link: `/rfqs/${rv.rfqId}?tab=quotations`,
   });
 
-  // Parse now (fast path); the job runner retries on failure.
+  // Parse now, before responding — serverless hosts (Vercel) may freeze the function once the response is sent,
+  // so fire-and-forget work would never finish. The job runner retries if this fails.
   const job = await enqueueJob("PARSE_QUOTATION", { versionId: version.id }, { dedupeKey: `parse:${version.id}` });
-  processQuotationVersion(version.id)
+  await processQuotationVersion(version.id)
     .then(() => db.job.update({ where: { id: job.id }, data: { status: "DONE", doneAt: new Date() } }))
     .catch((e) => console.error("[parse]", e));
   return { referenceNo: quotation.referenceNo, versionNo };

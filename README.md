@@ -111,7 +111,7 @@ See `.env.example`.
 | `GEMINI_API_KEY`, `GEMINI_MODEL` (default `gemini-3.8-flash`) | quotation reading (text, PDF, scanned PDFs, photos), auto-filling the vendor quote form on upload, and live market-rate search | rule-based extractor; scanned PDFs and photos go to manual review |
 | `MAPS_PROVIDER` = `google` \| `ors` \| `haversine`, `GOOGLE_MAPS_API_KEY`, `ORS_API_KEY` | geocoding + driving distance | straight-line distance Ã— 1.3 road factor |
 | `MARKET_RATE_PROVIDER` = `gemini` (default when `GEMINI_API_KEY` is set: Gemini + Google Search grounding) \| `tavily` \| `serper` \| `demo`, `TAVILY_API_KEY`, `SERPER_API_KEY` | online market rates | demo provider, clearly labelled as simulated |
-| `STORAGE_DRIVER` = `local` \| `s3`, `S3_*` | file storage | `./.data/uploads` |
+| `STORAGE_DRIVER` = `db` \| `local` \| `s3`, `S3_*` | file storage | `db`: files in MongoDB (required on Vercel/serverless; `local` is ignored there) |
 | `CRON_SECRET` | protects `/api/cron` | endpoint disabled |
 
 ---
