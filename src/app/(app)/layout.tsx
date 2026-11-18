@@ -3,6 +3,7 @@ import { currentProject } from "@/lib/project-context";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { AppShell } from "@/components/shell/app-shell";
+import { Copilot } from "@/components/copilot/copilot";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -21,6 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       canCreateProject={can(user, "manageProject")}
     >
       {children}
+      <Copilot userName={user.name} />
     </AppShell>
   );
 }

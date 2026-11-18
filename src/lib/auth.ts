@@ -1,6 +1,7 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { getServerSession } from "next-auth";
+import { cache } from "react";
 import bcrypt from "bcryptjs";
 import { redirect } from "next/navigation";
 import type { Role } from "@prisma/client";
@@ -61,11 +62,12 @@ export const authOptions: NextAuthOptions = {
 
 export type SessionUser = { id: string; name: string; email: string; role: Role };
 
-export async function getUser(): Promise<SessionUser | null> {
+/** The signed-in user (from the session JWT). Cached per request — layout and page both ask for it. */
+export const getUser = cache(async (): Promise<SessionUser | null> => {
   const s = await getServerSession(authOptions);
   if (!s?.user?.id) return null;
   return { id: s.user.id, name: s.user.name ?? "", email: s.user.email ?? "", role: s.user.role };
-}
+});
 
 /** For server components/pages: redirects to /login when signed out. */
 export async function requireUser(): Promise<SessionUser> {

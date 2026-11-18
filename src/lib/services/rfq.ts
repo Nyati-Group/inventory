@@ -163,22 +163,23 @@ export async function createAndSendRfq(input: SendRfqInput, user: SessionUser) {
         attachments: (input.attachments ?? []) as never,
         createdById: user.id,
         items: { create: { materialId: material.id, quantity: input.quantity, unit: material.unit, spec: material.spec } },
-        vendors: {
-          create: vendors.map((v) => {
-            const t = newToken();
-            tokens.set(v.id, t);
-            return {
-              vendorId: v.id,
-              tokenHash: hashToken(t),
-              tokenCipher: encrypt(t),
-              tokenExpiresAt: rfqLinkExpiry(input.deadline),
-              deadline: input.deadline,
-              distanceKm: pvs.find((p) => p.vendorId === v.id)?.distanceKm ?? null,
-            };
-          }),
-        },
       },
-      include: { vendors: true },
+    });
+    // One insert for all vendor invitations (nested creates cost one round trip per vendor).
+    await tx.rFQVendor.createMany({
+      data: vendors.map((v) => {
+        const t = newToken();
+        tokens.set(v.id, t);
+        return {
+          rfqId: created.id,
+          vendorId: v.id,
+          tokenHash: hashToken(t),
+          tokenCipher: encrypt(t),
+          tokenExpiresAt: rfqLinkExpiry(input.deadline),
+          deadline: input.deadline,
+          distanceKm: pvs.find((p) => p.vendorId === v.id)?.distanceKm ?? null,
+        };
+      }),
     });
     if (input.materialRequestId)
       await tx.materialRequest.update({ where: { id: input.materialRequestId }, data: { status: "RFQ_CREATED", rfqId: created.id } });
@@ -187,8 +188,9 @@ export async function createAndSendRfq(input: SendRfqInput, user: SessionUser) {
   });
 
   await renderRfqDocuments(rfq.id);
-  for (const rv of rfq.vendors) await emailRfqVendor(rv.id, "invite", tokens.get(rv.vendorId));
-  return rfq;
+  const invited = await db.rFQVendor.findMany({ where: { rfqId: rfq.id } });
+  for (const rv of invited) await emailRfqVendor(rv.id, "invite", tokens.get(rv.vendorId));
+  return { ...rfq, vendors: invited };
 }
 
 type EmailKind = "invite" | "reminder" | "extension" | "negotiation" | "not_selected";

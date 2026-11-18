@@ -266,3 +266,134 @@ export async function uploadVendorDocument(fd: FormData) {
     return undefined;
   });
 }
+
+// ─────────────────────────── Bulk upload (Vendors page) ───────────────────────────
+
+export type VendorPreviewRow = import("@/lib/vendor-import").VendorImportRow & {
+  status: "new" | "duplicate" | "error";
+  errors: string[];
+  duplicateOf: string | null;
+  unknownCategories: string[];
+};
+
+/** Step 1: read a CSV/XLSX vendor list and show what will happen to each row. Nothing is saved. */
+export async function previewVendorImport(fd: FormData) {
+  return run(async () => {
+    await requireRole("PROCUREMENT_MANAGER");
+    const file = fd.get("file");
+    if (!(file instanceof File) || !file.size) throw new Error("Choose a CSV or Excel (.xlsx) file");
+    if (file.size > 5 * 1024 * 1024) throw new Error("File is larger than 5 MB");
+    const { parseCsv, parseXlsx, gridToVendors, rowErrors } = await import("@/lib/vendor-import");
+    const buf = Buffer.from(await file.arrayBuffer());
+    const lower = file.name.toLowerCase();
+    if (lower.endsWith(".xls")) throw new Error("Old .xls files aren't supported — save the sheet as .xlsx or .csv and upload again");
+    const grid = lower.endsWith(".xlsx") ? parseXlsx(buf) : parseCsv(buf.toString("utf8"));
+    const { rows, unknownColumns, missingRequired } = gridToVendors(grid);
+    if (missingRequired.length) throw new Error(`Missing column(s): ${missingRequired.join(", ")}. Download the template to see the expected columns.`);
+    if (!rows.length) throw new Error("The file has no vendor rows");
+    if (rows.length > 1000) throw new Error("Upload at most 1,000 vendors at a time");
+
+    const cats = await db.materialCategory.findMany({ select: { name: true } });
+    const catNames = new Set(cats.map((c) => c.name.toLowerCase()));
+    const seenEmail = new Map<string, number>();
+    const seenGstin = new Map<string, number>();
+    const out: VendorPreviewRow[] = [];
+    for (const r of rows) {
+      const errors = rowErrors(r);
+      let duplicateOf: string | null = null;
+      if (!errors.length) {
+        const inFile = r.emails.map((e) => seenEmail.get(e)).find(Boolean) ?? (r.gstin ? seenGstin.get(r.gstin) : undefined);
+        if (inFile) errors.push(`Same email/GSTIN as row ${inFile} in this file`);
+        else {
+          const dup = await findDuplicateVendor(r.gstin || undefined, r.emails);
+          if (dup) duplicateOf = dup.name;
+        }
+      }
+      r.emails.forEach((e) => seenEmail.set(e, seenEmail.get(e) ?? r.row));
+      if (r.gstin) seenGstin.set(r.gstin, seenGstin.get(r.gstin) ?? r.row);
+      out.push({
+        ...r,
+        status: errors.length ? "error" : duplicateOf ? "duplicate" : "new",
+        errors,
+        duplicateOf,
+        unknownCategories: r.categories.filter((c) => !catNames.has(c.toLowerCase())),
+      });
+    }
+    return { rows: out, unknownColumns };
+  });
+}
+
+/**
+ * Step 2: create the new vendors (duplicates are skipped, or only linked to the project if one is chosen).
+ * Location comes from the city list first (fast); the geocoder is used only for unknown cities.
+ */
+export async function importVendorRows(fd: FormData) {
+  return run(async () => {
+    const user = await requireRole("PROCUREMENT_MANAGER");
+    const projectId = String(fd.get("projectId") ?? "") || null;
+    if (projectId) await assertProjectAccess(user, projectId);
+    const { parseCsv, parseXlsx, gridToVendors, rowErrors } = await import("@/lib/vendor-import");
+    const file = fd.get("file");
+    if (!(file instanceof File) || !file.size) throw new Error("Choose a file");
+    const buf = Buffer.from(await file.arrayBuffer());
+    const grid = file.name.toLowerCase().endsWith(".xlsx") ? parseXlsx(buf) : parseCsv(buf.toString("utf8"));
+    const { rows } = gridToVendors(grid);
+    const cats = await db.materialCategory.findMany();
+    const seen = new Set<string>();
+    let created = 0;
+    let linked = 0;
+    const skipped: string[] = [];
+    const failed: string[] = [];
+    for (const r of rows.slice(0, 1000)) {
+      const errors = rowErrors(r);
+      if (errors.length) { failed.push(`Row ${r.row}: ${errors[0]}`); continue; }
+      if (r.emails.some((e) => seen.has(e)) || (r.gstin && seen.has(r.gstin))) { failed.push(`Row ${r.row}: duplicate within the file`); continue; }
+      r.emails.forEach((e) => seen.add(e));
+      if (r.gstin) seen.add(r.gstin);
+      try {
+        const dup = await findDuplicateVendor(r.gstin || undefined, r.emails);
+        let vendorId = dup?.id;
+        if (!vendorId) {
+          const loc = CITY_COORDS[r.city.toLowerCase()] ?? (await geocode([r.address, r.city, r.state].filter(Boolean).join(", ")));
+          const v = await db.vendor.create({
+            data: {
+              name: r.name,
+              contactPerson: r.contactPerson || null,
+              emails: r.emails,
+              phone: r.phone || null,
+              whatsapp: r.whatsapp || null,
+              gstin: r.gstin || null,
+              pan: r.pan || null,
+              address: r.address || null,
+              city: r.city,
+              state: r.state || null,
+              pincode: r.pincode || null,
+              lat: loc?.lat,
+              lng: loc?.lng,
+              serviceRadiusKm: Math.min(3000, Math.max(1, r.serviceRadiusKm ?? 100)),
+              leadTimeDays: Math.min(180, Math.max(0, r.leadTimeDays ?? 3)),
+              paymentTerms: r.paymentTerms || null,
+              creditDays: Math.min(365, Math.max(0, r.creditDays ?? 0)),
+              notes: r.notes || null,
+              categories: {
+                create: [...new Set(r.categories.map((n) => cats.find((x) => x.name.toLowerCase() === n.toLowerCase())?.id).filter((x): x is string => !!x))].map((categoryId) => ({ categoryId })),
+              },
+            },
+          });
+          vendorId = v.id;
+          created++;
+        } else skipped.push(`${r.name} (already exists as ${dup!.name})`);
+        if (projectId) {
+          await linkToProject(projectId, vendorId);
+          linked++;
+        }
+      } catch (e) {
+        failed.push(`Row ${r.row} (${r.name}): ${(e as Error).message.slice(0, 120)}`);
+      }
+    }
+    await audit(user, "Vendor", projectId ?? "directory", "BULK_IMPORT", { after: { created, linked, skipped: skipped.length, failed: failed.length }, projectId: projectId ?? undefined });
+    revalidatePath("/vendors");
+    revalidatePath("/project-settings");
+    return { created, linked, skipped, failed };
+  });
+}

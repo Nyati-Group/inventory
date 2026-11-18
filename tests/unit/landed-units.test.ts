@@ -70,14 +70,19 @@ describe("rule-based quotation extraction", () => {
 describe("MongoDB connection string", () => {
   it("inserts MONGODB_DB into an Atlas SRV URI and keeps the query string", () => {
     expect(mongoUrl({ MONGODB_URI: "mongodb+srv://u:p@cluster0.ab.mongodb.net/?retryWrites=true&w=majority", MONGODB_DB: "nyati_procurement" })).toBe(
-      "mongodb+srv://u:p@cluster0.ab.mongodb.net/nyati_procurement?retryWrites=true&w=majority",
+      "mongodb+srv://u:p@cluster0.ab.mongodb.net/nyati_procurement?retryWrites=true&w=majority&maxIdleTimeMS=30000&connectTimeoutMS=5000&retryReads=true",
+    );
+  });
+  it("keeps pool options that are already in the URI", () => {
+    expect(mongoUrl({ MONGODB_URI: "mongodb://h:27017/x?maxIdleTimeMS=5000&connectTimeoutMS=2000&retryReads=false&retryWrites=false" })).toBe(
+      "mongodb://h:27017/x?maxIdleTimeMS=5000&connectTimeoutMS=2000&retryReads=false&retryWrites=false",
     );
   });
   it("MONGODB_DB overrides a database already in the URI", () => {
-    expect(mongoUrl({ MONGODB_URI: "mongodb://localhost:27017/old?replicaSet=rs0", MONGODB_DB: "nyati" })).toBe("mongodb://localhost:27017/nyati?replicaSet=rs0");
+    expect(mongoUrl({ MONGODB_URI: "mongodb://localhost:27017/old?replicaSet=rs0", MONGODB_DB: "nyati" })).toBe("mongodb://localhost:27017/nyati?replicaSet=rs0&maxIdleTimeMS=30000&connectTimeoutMS=5000&retryReads=true&retryWrites=true");
   });
   it("uses the database in the URI when MONGODB_DB is empty", () => {
-    expect(mongoUrl({ MONGODB_URI: "mongodb://h:27017/nyati" })).toBe("mongodb://h:27017/nyati");
+    expect(mongoUrl({ MONGODB_URI: "mongodb://h:27017/nyati" })).toBe("mongodb://h:27017/nyati?maxIdleTimeMS=30000&connectTimeoutMS=5000&retryReads=true&retryWrites=true");
   });
   it("requires a database name", () => {
     expect(() => mongoUrl({ MONGODB_URI: "mongodb://h:27017" })).toThrow(/MONGODB_DB/);

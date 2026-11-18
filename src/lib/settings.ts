@@ -31,11 +31,17 @@ const DEFAULTS: SystemSettings = {
   ].join("\n"),
 };
 
+// Settings change rarely but are read on every page — keep them in memory for 30 s per server instance.
+const TTL_MS = 30_000;
+let cached: { at: number; value: SystemSettings } | null = null;
+
 export async function getSettings(): Promise<SystemSettings> {
+  if (cached && Date.now() - cached.at < TTL_MS) return cached.value;
   const rows = await db.systemSetting.findMany();
   const s = { ...DEFAULTS } as Record<string, unknown>;
   for (const r of rows) s[r.key] = r.value;
-  return s as unknown as SystemSettings;
+  cached = { at: Date.now(), value: s as unknown as SystemSettings };
+  return cached.value;
 }
 
 export async function setSetting<K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) {
@@ -44,4 +50,5 @@ export async function setSetting<K extends keyof SystemSettings>(key: K, value: 
     create: { key, value: value as never },
     update: { value: value as never },
   });
+  cached = null;
 }

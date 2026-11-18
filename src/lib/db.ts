@@ -8,6 +8,9 @@ function create() {
   return new PrismaClient({
     ...(url ? { datasourceUrl: url } : {}),
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    // Prisma's default (wait 2 s, run 5 s) is too tight when the server and Atlas are far apart or a
+    // serverless instance is cold — a slow network then fails otherwise-valid writes (P2028).
+    transactionOptions: { maxWait: 15_000, timeout: 30_000 },
   });
 }
 
@@ -20,4 +23,5 @@ export const db = globalForPrisma.prisma ?? create();
 export const notDeleted = { isSet: false } as const;
 export const unset = { isSet: false } as const;
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+// Reuse one client per process (dev hot-reload, and warm serverless instances).
+globalForPrisma.prisma = db;

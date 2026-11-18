@@ -3,13 +3,17 @@ import { db, notDeleted } from "@/lib/db";
 import { numOrNull } from "@/lib/utils";
 import { ratingGrade } from "@/lib/engine/rating";
 import { PageHeader } from "@/components/ui/misc";
+import { currentProject } from "@/lib/project-context";
 import { VendorDirectory } from "./directory";
+import { BulkUploadButton } from "./bulk-upload";
 
 export const metadata = { title: "Vendors" };
 
 export default async function VendorsPage() {
   const user = await requireUser();
-  const [vendors, categories, materials] = await Promise.all([
+  const canEdit = can(user, "manageVendors");
+  const [{ project, projects }, vendors, categories, materials] = await Promise.all([
+    currentProject(user),
     db.vendor.findMany({
       where: { deletedAt: notDeleted },
       include: { categories: { include: { category: true } }, projects: { select: { projectId: true } } },
@@ -40,8 +44,12 @@ export default async function VendorsPage() {
   });
   return (
     <div>
-      <PageHeader title="Vendor directory" description="All vendors across projects. Per-project distance, notes and blacklists live in each project's vendor book." />
-      <VendorDirectory rows={rows} categories={categories.map((c) => ({ id: c.id, name: c.name }))} materials={materials} canEdit={can(user, "manageVendors")} />
+      <PageHeader
+        title="Vendor directory"
+        description="All vendors across projects. Per-project distance, notes and blacklists live in each project's vendor book."
+        actions={canEdit && <BulkUploadButton projects={projects.map((p) => ({ id: p.id, name: p.name }))} currentProjectId={project?.id ?? null} />}
+      />
+      <VendorDirectory rows={rows} categories={categories.map((c) => ({ id: c.id, name: c.name }))} materials={materials} canEdit={canEdit} />
     </div>
   );
 }
